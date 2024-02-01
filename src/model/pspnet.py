@@ -7,7 +7,7 @@ from .vgg import vgg16_bn
 
 def get_model(args) -> nn.Module:
     # return PSPNet(args, zoom_factor=8, use_ppm=True)
-    return PSPNet(args, zoom_factor=8, use_ppm=False)
+    return PSPNet(args, zoom_factor=8)
 
 class PPM(nn.Module):
     def __init__(self, in_dim, reduction_dim, bins):
@@ -59,14 +59,14 @@ def get_vgg16_layer(model):
 
 
 class PSPNet(nn.Module):
-    def __init__(self, args, zoom_factor, use_ppm):
+    def __init__(self, args, zoom_factor):
         super(PSPNet, self).__init__()
         # assert args.layers in [50, 101, 152]
         assert 2048 % len(args.bins) == 0
         assert args.num_classes_tr > 1
         assert zoom_factor in [1, 2, 4, 8]
         self.zoom_factor = zoom_factor
-        self.use_ppm = use_ppm
+        self.use_ppm = args.use_ppm
         self.m_scale = args.m_scale
         self.bottleneck_dim = args.bottleneck_dim
 
@@ -93,17 +93,17 @@ class PSPNet(nn.Module):
             elif 'downsample.0' in n:
                 m.stride = (1, 1)
         if self.m_scale:
-            fea_dim = 1024 + 512
+            self.fea_dim = 1024 + 512
         else:
             if args.arch == 'resnet':
-                fea_dim = 2048
+                self.fea_dim = 2048
             elif args.arch == 'vgg':
-                fea_dim = 512
-        if use_ppm:
-            self.ppm = PPM(fea_dim, int(fea_dim/len(args.bins)), args.bins)
-            fea_dim *= 2
+                self.fea_dim = 512
+        if self.use_ppm:
+            self.ppm = PPM(self.fea_dim, int(self.fea_dim/len(args.bins)), args.bins)
+            self.fea_dim *= 2
             self.bottleneck = nn.Sequential(
-                nn.Conv2d(fea_dim, self.bottleneck_dim, kernel_size=3, padding=1, bias=False),
+                nn.Conv2d(self.fea_dim, self.bottleneck_dim, kernel_size=3, padding=1, bias=False),
                 nn.BatchNorm2d(self.bottleneck_dim),
                 nn.ReLU(inplace=True),
                 nn.Dropout2d(p=args.dropout))
@@ -133,8 +133,11 @@ class PSPNet(nn.Module):
             x = torch.cat([x_2, x_3], dim=1)
         else:
             x = self.layer4(x_3)
-        x = self.ppm(x)
-        x = self.bottleneck(x)
+
+        if self.use_ppm:
+            x = self.ppm(x)
+            x = self.bottleneck(x)
+
         return x
 
     def classify(self, features, shape):

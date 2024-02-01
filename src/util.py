@@ -89,7 +89,7 @@ def to_one_hot(mask: torch.tensor,
         one_hot_mask : shape [n_task, shot, num_class, h, w]
     """
     n_tasks, shot, h, w = mask.size()
-    one_hot_mask = torch.zeros(n_tasks, shot, num_classes, h, w).to(dist.get_rank())
+    one_hot_mask = torch.zeros(n_tasks, shot, num_classes, h, w).to('cuda' if torch.cuda.is_available() else 'cpu')
     new_mask = mask.unsqueeze(2).clone()
     new_mask[torch.where(new_mask == 255)] = 0  # Ignore_pixels are anyways filtered out in the losses
     one_hot_mask.scatter_(2, new_mask, 1).long()

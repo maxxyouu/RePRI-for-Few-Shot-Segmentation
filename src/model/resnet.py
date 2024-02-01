@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 import torch
+import torchvision
 
 
 # ==================================================================================================
@@ -192,6 +193,7 @@ def resnet50(pretrained=False, **kwargs):
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     if pretrained:
         # model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
+        # NOTE: the following is the original code
         model_path = './initmodel/resnet50_v2.pth'
         model.load_state_dict(torch.load(model_path), strict=False)
     return model

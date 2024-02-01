@@ -48,20 +48,22 @@ MODEL:
   m_scale: False
   layers: 50
   bottleneck_dim: 512
+  use_ppm: False
 
 EVALUATION:
   episodic_val: True
   shot: 1
   random_shot: False
   norm_feat: True
-  batch_size_val: 200
+  batch_size_val: 2 #200
   manual_seed: 2020
-  ckpt_used: split_new
+  ckpt_used: None
   test_num: 1000
   FB_param_noise: 0
   smoothing: True
   n_runs: 2
   save_oracle: False
+  device: 'cpu'
 
 VISUALIZATION:
   visu: False

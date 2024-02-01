@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
-from src.util import batch_intersectionAndUnionGPU
+from util import batch_intersectionAndUnionGPU
 from typing import List
-from .util import to_one_hot
+from util import to_one_hot
 from collections import defaultdict
 from typing import Tuple
 # from visdom_logger import VisdomLogger

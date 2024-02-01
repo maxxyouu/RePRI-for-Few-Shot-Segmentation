@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-import src.dataset.transform as transform
+import dataset.transform as transform
 from torch.utils.data import Dataset
 from .utils import make_dataset
 from .classes import get_split_classes, filter_classes
