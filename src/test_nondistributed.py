@@ -93,7 +93,7 @@ def main_worker(args: argparse.Namespace) -> None:
     #     val_Iou /= world_size
     #     val_loss /= world_size
 
-    cleanup()
+    # cleanup()
 
 
 def episodic_validate(args: argparse.Namespace,
@@ -312,46 +312,8 @@ if __name__ == "__main__":
         args.test_num = 500
         args.n_runs = 2
 
-    # args.temp = 20.0
-    # args.adapt_iter = 50
-    # args.fb_updates = [10]
-    # args.fb_type = 'random'
-    # args.cls_lr = 0.025
-    # args.n_runs = 5
-    # args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    # args.ckpt_used = None # None implies that use the default imagenet pretrained model
-    # args.pretrained = True
-    # args.num_classes_tr = 16
-
-    # args.use_ppm = False # toggle this for using the vanilla pretrained resnet or pspnet with ppm module
-    # args.bins = [1, 2, 3, 6] # this is only relevant when using ppm
-    # args.manual_seed = 100
-
-    # DATA
-    # args.train_name: "pascal"
-    # args.test_name: "default"
-    # args.train_split: 0
-    # args.test_split: "default"
-    # args.train_list: "lists/pascal/train.txt"
-    # args.data_root: "data/pascal/"
-    # args.val_list: "lists/pascal/val.txt"
-    # args.num_classes_tr: 16  # Counting background for training
-    # num_classes_val: 5
-    # use_split_coco: False
-    # workers: 3
-    # image_size: 417
-    # padding_label: 255
-    # mean: [0.485, 0.456, 0.406]
-    # std: [0.229, 0.224, 0.225]
-    # scale_min: 0.5
-    # scale_max: 2.0
-    # rot_min: -10
-    # rot_max: 10
-    # augmentations: ['hor_flip', 'vert_flip', 'resize']
-
-
     # non distributed version.
-    # args.device = 'cuda' if torch.cuda.is_available() else 'cpu'  
+    args.device = 'cuda' if torch.cuda.is_available() else 'cpu'  
     torch.manual_seed(args.manual_seed)
     main_worker(args)
 

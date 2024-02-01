@@ -58,7 +58,7 @@ EVALUATION:
   batch_size_val: 2 #200
   manual_seed: 2020
   ckpt_used: None
-  test_num: 1000
+  test_num: 20
   FB_param_noise: 0
   smoothing: True
   n_runs: 1
