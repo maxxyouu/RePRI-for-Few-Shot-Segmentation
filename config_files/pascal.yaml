@@ -61,7 +61,7 @@ EVALUATION:
   test_num: 1000
   FB_param_noise: 0
   smoothing: True
-  n_runs: 2
+  n_runs: 1
   save_oracle: False
   device: 'cpu'
 
@@ -75,7 +75,7 @@ CLASSIFIER:
   FB_param_type: soft
   weights: [1.0, 'auto', 'auto']  #  [0.5, 1.0, 0.1]
   cls_lr: 0.025
-  FB_param_update: [10]
+  FB_param_update: [10, 20, 30, 40]
   cls_visdom_freq: 5
 
 DISTRIBUTED:
