@@ -3,7 +3,9 @@ SHOT=$2
 GPU=$3
 LAYERS=$4
 
-SPLITS="0 1 2 3"
+# SPLITS="0 1 2 3"
+SPLITS="0"
+
 
 if [ $SHOT == 1 ]
 then

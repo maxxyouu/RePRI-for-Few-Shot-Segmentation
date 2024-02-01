@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.parallel
 import torch.utils.data
-from visdom_logger import VisdomLogger
+# from visdom_logger import VisdomLogger
 from collections import defaultdict
 from .dataset.dataset import get_val_loader
 from .util import AverageMeter, batch_intersectionAndUnionGPU, get_model_dir, main_process
@@ -23,6 +23,9 @@ import torch.multiprocessing as mp
 import time
 from .visu import make_episode_visualization
 from typing import Tuple
+
+import os
+os.environ["PL_TORCH_DISTRIBUTED_BACKEND"] = "gloo"
 
 
 def parse_args() -> None:
@@ -167,7 +170,7 @@ def episodic_validate(args: argparse.Namespace,
                 features_q = F.normalize(features_q, dim=2)
 
             # =========== Create a callback is args.visdom_port != -1 ===============
-            callback = VisdomLogger(port=args.visdom_port) if use_callback else None
+            callback = None #VisdomLogger(port=args.visdom_port) if use_callback else None
 
             # ===========  Initialize the classifier + prototypes + F/B parameter Π ===============
             classifier = Classifier(args)

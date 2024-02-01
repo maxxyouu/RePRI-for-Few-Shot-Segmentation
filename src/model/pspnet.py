@@ -6,8 +6,8 @@ from .vgg import vgg16_bn
 
 
 def get_model(args) -> nn.Module:
-    return PSPNet(args, zoom_factor=8, use_ppm=True)
-
+    # return PSPNet(args, zoom_factor=8, use_ppm=True)
+    return PSPNet(args, zoom_factor=8, use_ppm=False)
 
 class PPM(nn.Module):
     def __init__(self, in_dim, reduction_dim, bins):

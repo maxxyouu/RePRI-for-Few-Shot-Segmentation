@@ -56,7 +56,7 @@ EVALUATION:
   norm_feat: True
   batch_size_val: 200
   manual_seed: 2020
-  ckpt_used: best
+  ckpt_used: split_new
   test_num: 1000
   FB_param_noise: 0
   smoothing: True

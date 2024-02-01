@@ -5,7 +5,7 @@ from typing import List
 from .util import to_one_hot
 from collections import defaultdict
 from typing import Tuple
-from visdom_logger import VisdomLogger
+# from visdom_logger import VisdomLogger
 
 
 class Classifier(object):
@@ -195,7 +195,7 @@ class Classifier(object):
               gt_q: torch.tensor,
               subcls: List,
               n_shots: torch.tensor,
-              callback: VisdomLogger) -> torch.tensor:
+              callback) -> torch.tensor:
         """
         Performs RePRI inference
 
