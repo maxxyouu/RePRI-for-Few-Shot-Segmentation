@@ -20,6 +20,42 @@ class Classifier(object):
         self.FB_param_type = args.FB_param_type
         self.FB_param_noise = args.FB_param_noise
 
+    
+    def init_dense_prototype(self, support_features, features_q, gt_s, gt_q, subcls: List[int], callback):
+        """
+        inputs:
+            support_features : a list of[ x = [n_task, shot, c, h, w] ]
+            features_q : shape [n_task, 1, c, h, w]
+            gt_s : shape [n_task, shot, H, W]
+            gt_q : shape [n_task, 1, H, W]
+
+        returns :
+            prototypes : shape [n_task, c]
+            bias : shape [n_task]
+        """
+        dense_fg_prototypes = torch.zeros(gt_s.shape[0], sum([s.shape[-3] for s in support_features])).to(gt_s.device) # [n_task, out_dimension of each layer aggregates]
+
+        # DownSample support masks according to the spatial dimention of individual x in support_features
+        dense_fg_prototypes = []
+        for features_s in support_features:
+            n_task, shot, c, h, w = features_s.size()
+            ds_gt_s = F.interpolate(gt_s.float(), size=features_s.shape[-2:], mode='nearest')
+            ds_gt_s = ds_gt_s.long().unsqueeze(2)  # [n_task, shot, 1, h, w]
+
+            # Computing prototypes
+            fg_mask = (ds_gt_s == 1)
+            fg_prototype = (features_s * fg_mask).sum(dim=(1, 3, 4))
+            fg_prototype /= (fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
+            
+            dense_fg_prototypes.append(fg_prototype)
+
+        dense_fg_prototypes = torch.cat(dense_fg_prototypes, 1) # [n_tasks, aggregate of indiviudal out_dimension of features_s]
+        self.prototype = dense_fg_prototypes
+
+        logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
+        self.bias = logits_q.mean(dim=(1, 2, 3)) # single number shared by each task
+
+
     def init_prototypes(self, features_s: torch.tensor, features_q: torch.tensor,
                         gt_s: torch.tensor, gt_q: torch.tensor, subcls: List[int],
                         callback) -> None:
@@ -34,7 +70,6 @@ class Classifier(object):
             prototypes : shape [n_task, c]
             bias : shape [n_task]
         """
-
         # DownSample support masks
         n_task, shot, c, h, w = features_s.size()
         ds_gt_s = F.interpolate(gt_s.float(), size=features_s.shape[-2:], mode='nearest')
@@ -188,14 +223,18 @@ class Classifier(object):
             ce = ce.mean(0)
         return ce
 
+    def Dense_RePRI():
+
+        return
+
     def RePRI(self,
-              features_s: torch.tensor,
-              features_q: torch.tensor,
-              gt_s: torch.tensor,
-              gt_q: torch.tensor,
-              subcls: List,
-              n_shots: torch.tensor,
-              callback) -> torch.tensor:
+                features_s: torch.tensor,
+                features_q: torch.tensor,
+                gt_s: torch.tensor,
+                gt_q: torch.tensor,
+                subcls: List,
+                n_shots: torch.tensor,
+                callback) -> torch.tensor:
         """
         Performs RePRI inference
 
@@ -245,8 +284,8 @@ class Classifier(object):
             proba_s = self.get_probas(logits_s)
 
             d_kl, cond_entropy, marginal = self.get_entropies(valid_pixels_q,
-                                                              proba_q,
-                                                              reduction='none')
+                                                                proba_q,
+                                                                reduction='none')
             ce = self.get_ce(proba_s, valid_pixels_s, one_hot_gt_s, reduction='none')
             loss = l1 * ce + l2 * d_kl + l3 * cond_entropy
 

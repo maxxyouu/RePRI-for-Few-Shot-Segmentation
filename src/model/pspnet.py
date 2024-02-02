@@ -78,6 +78,11 @@ class PSPNet(nn.Module):
             self.layer0 = nn.Sequential(resnet.conv1, resnet.bn1, resnet.relu, resnet.conv2, resnet.bn2, resnet.relu, resnet.conv3, resnet.bn3, resnet.relu, resnet.maxpool)
             self.layer1, self.layer2, self.layer3, self.layer4 = resnet.layer1, resnet.layer2, resnet.layer3, resnet.layer4
             self.feature_res = (53, 53)
+            self.layer1_res = (256, 105, 105)
+            self.layer2_res = (512, 53, 53)
+            self.layer3_res = (1024, 53, 53)
+            self.layer4_res = (2048, 53, 53)
+
         elif args.arch == 'vgg':
             vgg = vgg16_bn(pretrained=args.pretrained)
             self.layer0, self.layer1, self.layer2, self.layer3, self.layer4 = get_vgg16_layer(vgg)
@@ -126,19 +131,42 @@ class PSPNet(nn.Module):
 
     def extract_features(self, x):
         x = self.layer0(x)
-        x = self.layer1(x)
-        x_2 = self.layer2(x)
+        x_1 = self.layer1(x)
+        x_2 = self.layer2(x_1)
         x_3 = self.layer3(x_2)
         if self.m_scale:
-            x = torch.cat([x_2, x_3], dim=1)
+            x_4 = torch.cat([x_2, x_3], dim=1)
         else:
-            x = self.layer4(x_3)
+            x_4 = self.layer4(x_3)
+        x_out = x_4
 
         if self.use_ppm:
-            x = self.ppm(x)
-            x = self.bottleneck(x)
+            x_ppm = self.ppm(x_4)
+            x_ppm = self.bottleneck(x_ppm)
+            x_out = x_ppm
 
-        return x
+        return  x_out
+    
+    def extract_dense_features(self, x):
+        """
+        return: (intermediate features), the final output features
+        """
+        x = self.layer0(x)
+        x_1 = self.layer1(x)
+        x_2 = self.layer2(x_1)
+        x_3 = self.layer3(x_2)
+        if self.m_scale:
+            x_4 = torch.cat([x_2, x_3], dim=1)
+        else:
+            x_4 = self.layer4(x_3)
+        x_out = x_4
+
+        if self.use_ppm:
+            x_ppm = self.ppm(x_4)
+            x_ppm = self.bottleneck(x_ppm)
+            x_out = x_ppm
+
+        return (x_1, x_2, x_3), x_out
 
     def classify(self, features, shape):
         x = self.classifier(features)
