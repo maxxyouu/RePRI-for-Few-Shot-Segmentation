@@ -21,11 +21,11 @@ class Classifier(object):
         self.FB_param_noise = args.FB_param_noise
 
     
-    def init_dense_prototype(self, support_features, features_q, gt_s, gt_q, subcls: List[int], callback):
+    def init_dense_prototype(self, support_features, queue_features, gt_s, gt_q, subcls: List[int], callback):
         """
         inputs:
             support_features : a list of[ x = [n_task, shot, c, h, w] ]
-            features_q : shape [n_task, 1, c, h, w]
+            queue_features : a list of [n_task, 1, c, h, w]
             gt_s : shape [n_task, shot, H, W]
             gt_q : shape [n_task, 1, H, W]
 
@@ -52,7 +52,7 @@ class Classifier(object):
         dense_fg_prototypes = torch.cat(dense_fg_prototypes, 1) # [n_tasks, aggregate of indiviudal out_dimension of features_s]
         self.prototype = dense_fg_prototypes
 
-        logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
+        logits_q = self.get_logits(torch.cat(queue_features, 2))  # [n_tasks, shot, h, w] TODO: must make all the features of the same size now all layers have the same spatial dimention.
         self.bias = logits_q.mean(dim=(1, 2, 3)) # single number shared by each task
 
 
@@ -111,6 +111,7 @@ class Classifier(object):
                     features.norm(dim=4)) + 1e-10)  # [n_tasks, shot, h, w]
 
         return self.temperature * cossim
+    
 
     def get_probas(self, logits: torch.tensor) -> torch.tensor:
         """
@@ -126,6 +127,42 @@ class Classifier(object):
         probas = torch.cat([probas_bg, probas_fg], dim=2)
         return probas
 
+    def compute_FB_param_dense(self, queue_features: List[torch.tensor], gt_q: torch.tensor) -> torch.tensor:
+        """
+        inputs:
+            queue_features : shape list of [n_tasks, shot, c, h, w]
+            gt_q : shape [n_tasks, shot, h, w]
+
+        updates :
+            self.FB_param : shape [n_tasks, num_classes]
+        """
+        ds_gt_q = F.interpolate(gt_q.float(), size=queue_features[-1].size()[-2:], mode='nearest').long() #TODO: same thing, must match below
+        valid_pixels = (ds_gt_q != 255).unsqueeze(2)  # [n_tasks, shot, num_classes, h, w]
+        assert (valid_pixels.sum(dim=(1, 2, 3, 4)) == 0).sum() == 0, valid_pixels.sum(dim=(1, 2, 3, 4))
+
+        one_hot_gt_q = to_one_hot(ds_gt_q, self.num_classes)  # [n_tasks, shot, num_classes, h, w]
+        oracle_FB_param = (valid_pixels * one_hot_gt_q).sum(dim=(1, 3, 4)) / valid_pixels.sum(dim=(1, 3, 4))
+
+        if self.FB_param_type == 'oracle':
+            self.FB_param = oracle_FB_param
+            # Used to assess influence of delta perturbation
+            if self.FB_param_noise != 0:
+                perturbed_FB_param = oracle_FB_param
+                perturbed_FB_param[:, 1] += self.FB_param_noise * perturbed_FB_param[:, 1]
+                perturbed_FB_param = torch.clamp(perturbed_FB_param, 0, 1)
+                perturbed_FB_param[:, 0] = 1.0 - perturbed_FB_param[:, 1]
+                self.FB_param = perturbed_FB_param
+
+        else:
+            logits_q = self.get_logits(torch.cat(queue_features, 2)) #TODO: must make all the features of the same size now all layers have the same spatial dimention.
+            probas = self.get_probas(logits_q).detach()
+            self.FB_param = (valid_pixels * probas).sum(dim=(1, 3, 4))
+            self.FB_param /= valid_pixels.sum(dim=(1, 3, 4))
+
+        # Compute the relative error
+        deltas = self.FB_param[:, 1] / oracle_FB_param[:, 1] - 1
+        return deltas
+
     def compute_FB_param(self, features_q: torch.tensor, gt_q: torch.tensor) -> torch.tensor:
         """
         inputs:
@@ -133,7 +170,7 @@ class Classifier(object):
             gt_q : shape [n_tasks, shot, h, w]
 
         updates :
-             self.FB_param : shape [n_tasks, num_classes]
+            self.FB_param : shape [n_tasks, num_classes]
         """
         ds_gt_q = F.interpolate(gt_q.float(), size=features_q.size()[-2:], mode='nearest').long()
         valid_pixels = (ds_gt_q != 255).unsqueeze(2)  # [n_tasks, shot, num_classes, h, w]
@@ -223,9 +260,85 @@ class Classifier(object):
             ce = ce.mean(0)
         return ce
 
-    def Dense_RePRI():
+    def Dense_RePRI(self,
+                    support_features: List[torch.tensor],
+                    queue_features: List[torch.tensor],
+                    gt_s: torch.tensor,
+                    gt_q: torch.tensor,
+                    subcls: List,
+                    n_shots: torch.tensor,
+                    callback) -> torch.tensor:
+        """
+        Performs RePRI inference
 
-        return
+        inputs:
+            support_features : shape list of [n_tasks, shot, c, h, w]
+            queue_features : shape list of [n_tasks, shot, c, h, w]
+            gt_s : shape [n_tasks, shot, h, w]
+            gt_q : shape [n_tasks, shot, h, w]
+            subcls : List of classes present in each task
+            n_shots : # of support shots for each task, shape [n_tasks,]
+
+        updates :
+            prototypes : torch.Tensor of shape [n_tasks, num_class, c]
+
+        returns :
+            deltas : Relative error on FB estimation right after first update, for each task,
+                    shape [n_tasks,]
+        """
+        deltas = torch.zeros_like(n_shots)
+        l1, l2, l3 = self.weights
+        if l2 == 'auto':
+            l2 = 1 / n_shots
+        else:
+            l2 = l2 * torch.ones_like(n_shots)
+        if l3 == 'auto':
+            l3 = 1 / n_shots
+        else:
+            l3 = l3 * torch.ones_like(n_shots)
+
+        self.prototype.requires_grad_()
+        self.bias.requires_grad_()
+        optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr)
+
+        ds_gt_q = F.interpolate(gt_q.float(), size=queue_features[-1].size()[-2:], mode='nearest').long() # TODO: the size must match whatever below
+        ds_gt_s = F.interpolate(gt_s.float(), size=support_features[-1].size()[-2:], mode='nearest').long() # TODO: the size must match whatever below
+
+        valid_pixels_q = (ds_gt_q != 255).float()  # [n_tasks, shot, h, w]
+        valid_pixels_s = (ds_gt_s != 255).float()  # [n_tasks, shot, h, w]
+
+        one_hot_gt_s = to_one_hot(ds_gt_s, self.num_classes)  # [n_tasks, shot, num_classes, h, w]
+        # TODO: downsample or upsample the spatial dimentions of feature tensor at each layer
+            # for now, the dimensions are the same, so leave it as is.
+        support_features = torch.cat(support_features, 2) # TODO: to generalise this operation, it needs common spatial dimension
+        queue_features_tensor = torch.cat(queue_features, 2) # TODO: to generalise this operation, it needs common spatial dimension
+        
+        for iteration in range(1, self.adapt_iter):
+
+            logits_s = self.get_logits(support_features)  # [n_tasks, shot, num_class, h, w]
+            logits_q = self.get_logits(queue_features_tensor)  # [n_tasks, 1, num_class, h, w]
+            proba_q = self.get_probas(logits_q)
+            proba_s = self.get_probas(logits_s)
+
+            d_kl, cond_entropy, marginal = self.get_entropies(valid_pixels_q,
+                                                                proba_q,
+                                                                reduction='none')
+            ce = self.get_ce(proba_s, valid_pixels_s, one_hot_gt_s, reduction='none')
+            loss = l1 * ce + l2 * d_kl + l3 * cond_entropy
+
+            optimizer.zero_grad()
+            loss.sum(0).backward()
+            optimizer.step()
+
+            # Update FB_param
+            if (iteration + 1) in self.FB_param_update  \
+                    and ('oracle' not in self.FB_param_type) and (l2.sum().item() != 0):
+                deltas = self.compute_FB_param_dense(queue_features, gt_q).cpu()
+                l2 += 1
+
+            # if callback is not None and (iteration + 1) % self.visdom_freq == 0:
+            #     self.update_callback(callback, iteration, features_s, features_q, subcls, gt_s, gt_q)
+        return deltas
 
     def RePRI(self,
                 features_s: torch.tensor,

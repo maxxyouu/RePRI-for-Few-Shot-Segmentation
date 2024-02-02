@@ -142,6 +142,9 @@ def episodic_validate(args: argparse.Namespace,
             # NOTE: we skip layer 1 as it has different output spatial dimension, but hypothetically we can include it as well.
             layer2_feature_s = torch.zeros(args.batch_size_val, args.shot, model.layer2_res[0], h, w).to(args.device)
             layer3_feature_s = torch.zeros(args.batch_size_val, args.shot, model.layer3_res[0], h, w).to(args.device)
+            layer2_feature_q = torch.zeros(args.batch_size_val, 1, model.layer2_res[0], h, w).to(args.device)
+            layer3_feature_q = torch.zeros(args.batch_size_val, 1, model.layer3_res[0], h, w).to(args.device)
+
             features_s = torch.zeros(args.batch_size_val, args.shot, c, h, w).to(args.device)
             features_q = torch.zeros(args.batch_size_val, 1, c, h, w).to(args.device)
             gt_s = 255 * torch.ones(args.batch_size_val, args.shot, args.image_size,
@@ -168,14 +171,17 @@ def episodic_validate(args: argparse.Namespace,
                     qry_img = qry_img.to(args.device, non_blocking=True)
 
                     # f_s = model.extract_features(spprt_imgs.squeeze(0))
-                    intermediate_fs, f_s = model.extract_dense_features(spprt_imgs.squeeze(0))
+                    # f_q = model.extract_features(qry_img)
 
-                    f_q = model.extract_features(qry_img)
+                    intermediate_fs, f_s = model.extract_dense_features(spprt_imgs.squeeze(0))
+                    intermediate_fq, f_q = model.extract_dense_features(qry_img)
 
                     shot = f_s.size(0)
                     n_shots[i] = shot
                     layer2_feature_s[i, :shot] = intermediate_fs[1].detach()
                     layer3_feature_s[i, :shot] = intermediate_fs[2].detach()
+                    layer2_feature_q[i, :shot] = intermediate_fq[1].detach()
+                    layer3_feature_q[i, :shot] = intermediate_fq[2].detach()
                     features_s[i, :shot] = f_s.detach()
                     features_q[i] = f_q.detach()
                     gt_s[i, :shot] = s_label
@@ -194,20 +200,25 @@ def episodic_validate(args: argparse.Namespace,
             classifier = Classifier(args)
             
             # classifier.init_prototypes(features_s, features_q, gt_s, gt_q, classes, callback)
-            classifier.init_dense_prototype([layer2_feature_s, layer3_feature_s, features_s], features_q, gt_s, gt_q, classes, callback)
+            classifier.init_dense_prototype([layer2_feature_s, layer3_feature_s, features_s], [layer2_feature_q, layer3_feature_q, features_q], gt_s, gt_q, classes, callback)
             
-            batch_deltas = classifier.compute_FB_param(features_q=features_q, gt_q=gt_q)
+            # batch_deltas = classifier.compute_FB_param(features_q=features_q, gt_q=gt_q)
+            batch_deltas = classifier.compute_FB_param_dense(queue_features=[layer2_feature_q, layer3_feature_q, features_q], gt_q=gt_q)
+
             deltas_init[run, e, :] = batch_deltas.cpu()
 
             # =========== Perform RePRI inference ===============
-            # batch_deltas = classifier.RePRI(features_s, features_q, gt_s, gt_q, classes, n_shots, callback)
-            batch_deltas = classifier.Dense_RePRI(features_s, features_q, gt_s, gt_q, classes, n_shots, callback)
             
+            # NOTE: the following maining to training the prototype vector
+            # batch_deltas = classifier.RePRI(features_s, features_q, gt_s, gt_q, classes, n_shots, callback)
+            batch_deltas = classifier.Dense_RePRI([layer2_feature_s, layer3_feature_s, features_s], [layer2_feature_q, layer3_feature_q, features_q], gt_s, gt_q, classes, n_shots, callback)
             
             deltas_final[run, e, :] = batch_deltas
             t1 = time.time()
             runtime += t1 - t0
-            logits = classifier.get_logits(features_q)  # [n_tasks, shot, h, w]
+
+            # actually make inference on the query image with the dense features TODO: must make all the features of the same size now all layers have the same spatial dimention.
+            logits = classifier.get_logits(torch.cat([layer2_feature_q, layer3_feature_q, features_q], 2))  # [n_tasks, shot, h, w]
             logits = F.interpolate(logits,
                                     size=(H, W),
                                     mode='bilinear',

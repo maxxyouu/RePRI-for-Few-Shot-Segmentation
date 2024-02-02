@@ -52,7 +52,7 @@ MODEL:
 
 EVALUATION:
   episodic_val: True
-  shot: 5
+  shot: 1
   random_shot: False
   norm_feat: True
   batch_size_val: 2 #200
