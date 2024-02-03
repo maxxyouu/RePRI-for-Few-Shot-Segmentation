@@ -164,9 +164,9 @@ def episodic_validate(args: argparse.Namespace,
                     qry_img = qry_img.to(args.device, non_blocking=True)
 
                     f_s = model.extract_features(spprt_imgs.squeeze(0))
-                    f_s = model.layer4[2].nonclipped_feature
+                    # f_s = model.layer4[2].nonclipped_feature
                     f_q = model.extract_features(qry_img)
-                    f_q = model.layer4[2].nonclipped_feature
+                    # f_q = model.layer4[2].nonclipped_feature
 
                     shot = f_s.size(0)
                     n_shots[i] = shot
