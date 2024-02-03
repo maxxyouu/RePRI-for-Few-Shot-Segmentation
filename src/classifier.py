@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from util import batch_intersectionAndUnionGPU
 from typing import List
@@ -75,11 +76,16 @@ class Classifier(object):
         ds_gt_s = F.interpolate(gt_s.float(), size=features_s.shape[-2:], mode='nearest')
         ds_gt_s = ds_gt_s.long().unsqueeze(2)  # [n_task, shot, 1, h, w]
 
-        # Computing prototypes
+        # Computing prototypes as masked class feature prototype
         fg_mask = (ds_gt_s == 1)
         fg_prototype = (features_s * fg_mask).sum(dim=(1, 3, 4))
         fg_prototype /= (fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
-        self.prototype = fg_prototype
+        # self.prototype = fg_prototype # TODO: uncomment this to intialize a prototype vector as a masked class feature prototype.
+
+        # Compute prototypes as raw randomly intiailized vector - just like a prompt token
+        ctx_vectors = torch.empty(size=fg_prototype.shape, dtype=fg_prototype.dtype)
+        nn.init.normal_(ctx_vectors, std=0.02)
+        self.prototype = ctx_vectors
 
         logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
         self.bias = logits_q.mean(dim=(1, 2, 3))
