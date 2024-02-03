@@ -67,7 +67,7 @@ class Bottleneck(nn.Module):
         self.bn2 = nn.BatchNorm2d(planes)
         self.conv3 = nn.Conv2d(planes, planes * self.expansion, kernel_size=1, bias=False)
         self.bn3 = nn.BatchNorm2d(planes * self.expansion)
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
 
@@ -89,7 +89,7 @@ class Bottleneck(nn.Module):
             residual = self.downsample(x)
 
         out += residual
-        out = self.relu(out)
+        # out = self.relu(out)
 
         return out
 

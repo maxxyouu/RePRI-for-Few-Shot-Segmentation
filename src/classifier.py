@@ -80,12 +80,12 @@ class Classifier(object):
         fg_mask = (ds_gt_s == 1)
         fg_prototype = (features_s * fg_mask).sum(dim=(1, 3, 4))
         fg_prototype /= (fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
-        # self.prototype = fg_prototype # TODO: uncomment this to intialize a prototype vector as a masked class feature prototype.
+        self.prototype = fg_prototype # TODO: uncomment this to intialize a prototype vector as a masked class feature prototype.
 
         # Compute prototypes as raw randomly intiailized vector - just like a prompt token
-        ctx_vectors = torch.empty(size=fg_prototype.shape, dtype=fg_prototype.dtype).to(fg_prototype.device)
-        nn.init.normal_(ctx_vectors, std=0.02)
-        self.prototype = ctx_vectors
+        # ctx_vectors = torch.empty(size=fg_prototype.shape, dtype=fg_prototype.dtype).to(fg_prototype.device)
+        # nn.init.normal_(ctx_vectors, std=0.02)
+        # self.prototype = ctx_vectors
 
         logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
         self.bias = logits_q.mean(dim=(1, 2, 3))
