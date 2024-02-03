@@ -83,7 +83,7 @@ class Classifier(object):
         # self.prototype = fg_prototype # TODO: uncomment this to intialize a prototype vector as a masked class feature prototype.
 
         # Compute prototypes as raw randomly intiailized vector - just like a prompt token
-        ctx_vectors = torch.empty(size=fg_prototype.shape, dtype=fg_prototype.dtype)
+        ctx_vectors = torch.empty(size=fg_prototype.shape, dtype=fg_prototype.dtype).to(fg_prototype.device)
         nn.init.normal_(ctx_vectors, std=0.02)
         self.prototype = ctx_vectors
 
