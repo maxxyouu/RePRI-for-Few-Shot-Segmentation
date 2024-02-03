@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from util import batch_intersectionAndUnionGPU
+from util import batch_intersectionAndUnionGPU, moving_average
 from typing import List
 from util import to_one_hot
 from collections import defaultdict
@@ -21,7 +21,14 @@ class Classifier(object):
         self.FB_param_type = args.FB_param_type
         self.FB_param_noise = args.FB_param_noise
 
-    
+        # NOTE: the following are for stochastic weight averaging of the prototype
+        self.swa_prototype = None
+        self.swa_bias = None
+        self.swa_n = 0 # keep incrementing by 1 at each average.
+        self.swa = args.swa
+        self.swa_start = args.swa_start
+        self.swa_c_adapt_it = args.swa_c_adapt_it
+
     def init_dense_prototype(self, support_features, queue_features, gt_s, gt_q, subcls: List[int], callback):
         """
         inputs:
@@ -90,11 +97,26 @@ class Classifier(object):
         logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
         self.bias = logits_q.mean(dim=(1, 2, 3))
 
+        if self.swa:
+            self.swa_bias = torch.zeros_like(self.bias).to(self.bias.device)
+            self.swa_prototype = torch.zeros_like(self.prototype).to(self.prototype.device)
+
         assert self.prototype.size() == (n_task, c), self.prototype.size()
         assert torch.isnan(self.prototype).sum() == 0, self.prototype
 
         if callback is not None:
             self.update_callback(callback, 0, features_s, features_q, subcls, gt_s, gt_q)
+    
+    def get_swa_logits(self, features):
+        # Put prototypes and features in the right shape for multiplication
+        features = features.permute((0, 1, 3, 4, 2))  # [n_task, shot, h, w, c]
+        prototype = self.swa_prototype.unsqueeze(1).unsqueeze(2) 
+        # Compute cosine similarity
+        cossim = features.matmul(prototype.unsqueeze(4)).squeeze(4)  # [n_task, shot, h, w]
+        cossim /= ((prototype.unsqueeze(3).norm(dim=4) * \
+                    features.norm(dim=4)) + 1e-10)  # [n_tasks, shot, h, w]
+
+        return self.temperature * cossim
 
     def get_logits(self, features: torch.tensor) -> torch.tensor:
 
@@ -118,6 +140,12 @@ class Classifier(object):
 
         return self.temperature * cossim
     
+    def get_swa_probas(self, logits):
+        logits_fg = logits - self.swa_bias.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+        probas_fg = torch.sigmoid(logits_fg).unsqueeze(2)
+        probas_bg = 1 - probas_fg
+        probas = torch.cat([probas_bg, probas_fg], dim=2)
+        return probas
 
     def get_probas(self, logits: torch.tensor) -> torch.tensor:
         """
@@ -411,6 +439,12 @@ class Classifier(object):
             optimizer.zero_grad()
             loss.sum(0).backward()
             optimizer.step()
+
+            # NOTE: SWA OPERATION UNTIL NO MORE OPERATION
+            if self.swa and (iteration + 1) >= self.swa_start and (iteration + 1 - self.swa_start) % self.swa_c_adapt_it == 0:
+                moving_average(self.swa_prototype, self.prototype.clone(), 1.0 / (self.swa_n + 1))
+                moving_average(self.swa_bias, self.bias.clone(), 1.0 / (self.swa_n + 1))
+                self.swa_n += 1
 
             # Update FB_param
             if (iteration + 1) in self.FB_param_update  \

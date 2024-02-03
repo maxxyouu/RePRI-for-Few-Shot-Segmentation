@@ -195,12 +195,18 @@ def episodic_validate(args: argparse.Namespace,
             deltas_final[run, e, :] = batch_deltas
             t1 = time.time()
             runtime += t1 - t0
-            logits = classifier.get_logits(features_q)  # [n_tasks, shot, h, w]
+            if classifier.swa:
+                logits = classifier.get_swa_logits(features_q)
+            else:
+                logits = classifier.get_logits(features_q)  # [n_tasks, shot, h, w]
             logits = F.interpolate(logits,
                                     size=(H, W),
                                     mode='bilinear',
                                     align_corners=True)
-            probas = classifier.get_probas(logits).detach()
+            if classifier.swa:
+                probas = classifier.get_swa_probas(logits).detach()
+            else:
+                probas = classifier.get_probas(logits).detach()
             intersection, union, _ = batch_intersectionAndUnionGPU(probas, gt_q, 2)  # [n_tasks, shot, num_class]
             intersection, union = intersection.cpu(), union.cpu()
 

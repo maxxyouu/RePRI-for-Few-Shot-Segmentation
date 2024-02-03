@@ -13,6 +13,13 @@ import argparse
 A = TypeVar("A")
 B = TypeVar("B")
 
+def moving_average(net1, net2, alpha=1):
+    net1 *= (1.0 - alpha)
+    net1 += net2 * alpha
+
+    # for param1, param2 in zip(net1.parameters(), net2.parameters()):
+    #     param1.data *= (1.0 - alpha)
+    #     param1.data += param2.data * alpha
 
 def main_process(args: argparse.Namespace) -> bool:
     if args.distributed:

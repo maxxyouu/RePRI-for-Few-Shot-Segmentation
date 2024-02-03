@@ -64,6 +64,9 @@ EVALUATION:
   n_runs: 1
   save_oracle: False
   device: 'cpu'
+  swa: False
+  swa_start: 20
+  swa_c_adapt_it: 10
 
 VISUALIZATION:
   visu: False
