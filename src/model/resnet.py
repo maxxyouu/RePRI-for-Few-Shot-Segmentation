@@ -70,6 +70,7 @@ class Bottleneck(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
+        self.nonclipped_feature = None
 
     def forward(self, x):
         residual = x
@@ -89,7 +90,8 @@ class Bottleneck(nn.Module):
             residual = self.downsample(x)
 
         out += residual
-        # out = self.relu(out)
+        self.nonclipped_feature = out.clone()
+        out = self.relu(out)
 
         return out
 

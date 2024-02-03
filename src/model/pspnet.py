@@ -134,16 +134,12 @@ class PSPNet(nn.Module):
     def extract_features(self, x):
         x = self.layer0(x)
         x_1 = self.layer1(x)
-        x_1 = self.relu(x_1)
         x_2 = self.layer2(x_1)
-        x_2 = self.relu(x_2)
         x_3 = self.layer3(x_2)
-        x_3 = self.relu(x_3)
         if self.m_scale:
             x_4 = torch.cat([x_2, x_3], dim=1)
         else:
             x_4 = self.layer4(x_3)
-        # x_4 = self.relu(x_4) #NOTE: uncomment this to recover the original model with relu at the end of each bottleneck.
         x_out = x_4
 
         if self.use_ppm:
