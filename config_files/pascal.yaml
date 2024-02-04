@@ -52,10 +52,10 @@ MODEL:
 
 EVALUATION:
   episodic_val: True
-  shot: 1
+  shot: 2
   random_shot: False
   norm_feat: True
-  batch_size_val: 2 #200
+  batch_size_val: 5 #200
   manual_seed: 2020
   ckpt_used: None
   test_num: 20

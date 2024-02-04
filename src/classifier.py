@@ -6,7 +6,116 @@ from typing import List
 from util import to_one_hot
 from collections import defaultdict
 from typing import Tuple
+import numpy as np
 # from visdom_logger import VisdomLogger
+
+class AttentionBasedBlock(nn.Module):
+    def __init__(self, nFeat, nK, scale_att=10.0):
+        super(AttentionBasedBlock, self).__init__()
+        self.nFeat = nFeat # output embedding dimention of the feature extractor
+
+        # initialize the query matrix
+        self.queryLayer = nn.Linear(nFeat, nFeat)
+        self.queryLayer.weight.data.copy_(
+            torch.eye(nFeat, nFeat) + torch.randn(nFeat, nFeat)*0.001)
+        self.queryLayer.bias.data.zero_()
+        # self.queryLayer.bias.data = bias # TODO: CHECK THIS
+        
+        # scale factor for the cosine similiarity
+        self.scale_att = nn.Parameter(
+            torch.FloatTensor(1).fill_(scale_att), requires_grad=True)
+        
+        # initialize the key matrix (number of shots, output embedding dimention of the feature extractor)
+        wkeys = torch.FloatTensor(nK, nFeat).normal_(0.0, np.sqrt(2.0/nFeat))
+        self.wkeys = nn.Parameter(wkeys, requires_grad=True)
+        # self.wkeys = F.normalize(self.wkeys, p=2, dim=wkeys.dim()-1, eps=1e-12)
+
+    def forward2(self, query, spprt_prototypes):
+        """_summary_
+
+        Args:
+            query (tensor): of shape (batch_size, 1, num_features)
+            spprt_prototypes (tensor): of shape (batch_size, k shots, num_features) 
+        """
+        # spprt_prototypes = spprt_prototypes.clone()
+        # note that B = 1 in RePRI
+        B, _, D, h, w = query.shape
+        kShots = spprt_prototypes.size(1) # [batch_size x kShots x num_features], number of support prototype vectors
+
+        Qe = self.queryLayer(query.sum(dim=(-2, -1))) # [n_tasks, 1, D]
+        # Qe = Qe.view(query.shape)
+        Qe = F.normalize(Qe, p=2, dim=Qe.dim()-1, eps=1e-12) # for cosine similiarity
+        assert(Qe.shape[-1] == self.nFeat)
+
+        # wkeys = self.wkeys[kShots*B] # the keys of the support prototypes
+        wkeys = F.normalize(self.wkeys, p=2, dim=self.wkeys.dim()-1, eps=1e-12).transpose(0,1).unsqueeze(0)
+        # wkeys = wkeys.view(B, kShots, self.nFeat).transpose(1,2) # for cosine similiarty
+
+        # cosine similiarity with scale factor
+        # AttentionCoeficients = self.scale_att * torch.bmm(Qe, wkeys)
+        AttentionCoeficients = self.scale_att * torch.matmul(Qe, wkeys)
+        AttentionCoeficients = F.softmax(AttentionCoeficients.view(B, kShots))
+        AttentionCoeficients = AttentionCoeficients.view(B, 1, kShots)
+        
+        # torch.matmul(Qe[0,:].unsqueeze(0), wkeys)
+        att_spprt_prototypes = torch.bmm(AttentionCoeficients, spprt_prototypes) # [n_tasks, 1, D]
+
+        return att_spprt_prototypes.squeeze(1)
+
+    def forward(self, features_train, labels_train, spprt_prototypes, Kbase):
+        """_summary_
+
+        Args:
+            features_train (_type_): in this context, it is the feature embedding of the query vector.
+            labels_train (_type_): _description_
+            spprt_prototypes (_type_): _description_
+            Kbase (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        return
+        # batch_size, num_train_examples, num_features = features_train.size()
+        # assert(num_train_examples == 1)
+        # kShots = spprt_prototypes.size(1) # [batch_size x kShots x num_features]
+        # labels_train_transposed = labels_train.transpose(1,2)
+        # nKnovel = labels_train_transposed.size(1) # [batch_size x nKnovel x num_train_examples]
+
+        # features_train = features_train.view(
+        #     batch_size*num_train_examples, num_features)
+        # Qe = self.queryLayer(features_train)
+        # Qe = Qe.view(batch_size, num_train_examples, self.nFeat)
+        # Qe = F.normalize(Qe, p=2, dim=Qe.dim()-1, eps=1e-12)
+
+        # wkeys = self.wkeys[Kbase.view(-1)] # the keys of the base categoreis
+        # wkeys = F.normalize(wkeys, p=2, dim=wkeys.dim()-1, eps=1e-12)
+        # # Transpose from [batch_size x kShots x nFeat] to
+        # # [batch_size x self.nFeat x kShots]
+        # wkeys = wkeys.view(batch_size, kShots, self.nFeat).transpose(1,2)
+
+        # # Compute the attention coeficients
+        # # batch matrix multiplications: AttentionCoeficients = Qe * wkeys ==>
+        # # [batch_size x num_train_examples x kShots] =
+        # #   [batch_size x num_train_examples x nFeat] * [batch_size x nFeat x kShots]
+        # AttentionCoeficients = self.scale_att * torch.bmm(Qe, wkeys)
+        # AttentionCoeficients = F.softmax(
+        #     AttentionCoeficients.view(batch_size*num_train_examples, kShots))
+        # AttentionCoeficients = AttentionCoeficients.view(
+        #     batch_size, num_train_examples, kShots)
+
+        # # batch matrix multiplications: weight_novel = AttentionCoeficients * spprt_prototypes ==>
+        # # [batch_size x num_train_examples x num_features] =
+        # #   [batch_size x num_train_examples x kShots] * [batch_size x kShots x num_features]
+        # weight_novel = torch.bmm(AttentionCoeficients, spprt_prototypes)
+
+        # # batch matrix multiplications: weight_novel = labels_train_transposed * weight_novel ==>
+        # # [batch_size x nKnovel x num_features] =
+        # #   [batch_size x nKnovel x num_train_examples] * [batch_size x num_train_examples x num_features]
+        # # weight_novel = torch.bmm(labels_train_transposed, weight_novel)
+        # # weight_novel = weight_novel.div(
+        # #     labels_train_transposed.sum(dim=2, keepdim=True).expand_as(weight_novel))
+
+        # return weight_novel
 
 
 class Classifier(object):
@@ -62,6 +171,43 @@ class Classifier(object):
 
         logits_q = self.get_logits(torch.cat(queue_features, 2))  # [n_tasks, shot, h, w] TODO: must make all the features of the same size now all layers have the same spatial dimention.
         self.bias = logits_q.mean(dim=(1, 2, 3)) # single number shared by each task
+
+    def init_att_prototypes(self, features_s: torch.tensor, features_q: torch.tensor,
+                        gt_s: torch.tensor, gt_q: torch.tensor, subcls: List[int],
+                        callback) -> None:
+        """
+        inputs:
+            features_s : shape [n_task, shot, c, h, w]
+            features_q : shape [n_task, 1, c, h, w]
+            gt_s : shape [n_task, shot, H, W]
+            gt_q : shape [n_task, 1, H, W]
+
+        returns :
+            prototypes : shape [n_task, c]
+            bias : shape [n_task]
+        """
+        # DownSample support masks
+        n_task, shot, c, h, w = features_s.size()
+        ds_gt_s = F.interpolate(gt_s.float(), size=features_s.shape[-2:], mode='nearest')
+        ds_gt_s = ds_gt_s.long().unsqueeze(2)  # [n_task, shot, 1, h, w]
+
+        # Computing prototypes as masked class feature prototype
+        fg_mask = (ds_gt_s == 1)
+        fg_prototype = (features_s * fg_mask).sum(dim=(3, 4)) 
+        self.spprt_prototypes = fg_prototype # shape [n_task, shot, c=2048], gather all the support prototypes to training the transformer module
+
+        # initialize the transformer module and compute the initial prototype. not accumulation of gradients
+        self.attention_block = AttentionBasedBlock(c, shot)
+        with torch.no_grad():
+            self.prototype = self.attention_block.forward2(features_q, fg_prototype.clone()) # TODO: do i need this here?
+
+        # find the bias and inialize it as the query matrix bias 
+        logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
+        self.bias = logits_q.mean(dim=(1, 2, 3)) # NOTE: this is to compute the probability of the logit map, different from the layer bias
+        # self.attention_block.queryLayer.bias.data = logits_q.mean(dim=(1, 2, 3)) # CHECK THIS
+
+        assert self.prototype.size() == (n_task, c), self.prototype.size()
+        assert torch.isnan(self.prototype).sum() == 0, self.prototype
 
 
     def init_prototypes(self, features_s: torch.tensor, features_q: torch.tensor,
@@ -373,6 +519,97 @@ class Classifier(object):
             # if callback is not None and (iteration + 1) % self.visdom_freq == 0:
             #     self.update_callback(callback, iteration, features_s, features_q, subcls, gt_s, gt_q)
         return deltas
+
+    def attention_RePRI(self,
+            features_s: torch.tensor,
+            features_q: torch.tensor,
+            gt_s: torch.tensor,
+            gt_q: torch.tensor,
+            subcls: List,
+            n_shots: torch.tensor,
+            callback) -> torch.tensor:
+        """
+        Performs RePRI inference
+
+        inputs:
+            features_s : shape [n_tasks, shot, c, h, w]
+            features_q : shape [n_tasks, shot, c, h, w]
+            gt_s : shape [n_tasks, shot, h, w]
+            gt_q : shape [n_tasks, shot, h, w]
+            subcls : List of classes present in each task
+            n_shots : # of support shots for each task, shape [n_tasks,]
+
+        updates :
+            the attention block that generate the prototype
+
+        returns :
+            deltas : Relative error on FB estimation right after first update, for each task,
+                     shape [n_tasks,]
+        """
+
+        deltas = torch.zeros_like(n_shots)
+        l1, l2, l3 = self.weights
+        if l2 == 'auto':
+            l2 = 1 / n_shots
+        else:
+            l2 = l2 * torch.ones_like(n_shots)
+        if l3 == 'auto':
+            l3 = 1 / n_shots
+        else:
+            l3 = l3 * torch.ones_like(n_shots)
+
+        # NOTE: the goal is no longer to learn the prototype but the attention module.
+        # self.prototype.requires_grad_()
+
+        # gradient learn the "transformer" module
+        # self.attention_block.requires_grad()
+        self.bias.requires_grad_()
+
+        optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr)
+
+        ds_gt_q = F.interpolate(gt_q.float(), size=features_s.size()[-2:], mode='nearest').long()
+        ds_gt_s = F.interpolate(gt_s.float(), size=features_s.size()[-2:], mode='nearest').long()
+
+        valid_pixels_q = (ds_gt_q != 255).float()  # [n_tasks, shot, h, w]
+        valid_pixels_s = (ds_gt_s != 255).float()  # [n_tasks, shot, h, w]
+
+        one_hot_gt_s = to_one_hot(ds_gt_s, self.num_classes)  # [n_tasks, shot, num_classes, h, w]
+
+        for iteration in range(1, self.adapt_iter):
+            # NOTE compute the protoype using the attention_block at each iteration, learnt from previous experience (iterations)
+            self.prototype = self.attention_block.forward2(features_q, self.spprt_prototypes)
+            
+            logits_s = self.get_logits(features_s)  # [n_tasks, shot, num_class, h, w]
+            logits_q = self.get_logits(features_q)  # [n_tasks, 1, num_class, h, w]
+            proba_q = self.get_probas(logits_q)
+            proba_s = self.get_probas(logits_s)
+
+            d_kl, cond_entropy, marginal = self.get_entropies(valid_pixels_q,
+                                                                proba_q,
+                                                                reduction='none')
+            ce = self.get_ce(proba_s, valid_pixels_s, one_hot_gt_s, reduction='none')
+            loss = l1 * ce + l2 * d_kl + l3 * cond_entropy
+
+            optimizer.zero_grad()
+            loss.sum(0).backward()
+            optimizer.step()
+
+            # NOTE: SWA OPERATION UNTIL NO MORE OPERATION
+            if self.swa and (iteration + 1) >= self.swa_start and (iteration + 1 - self.swa_start) % self.swa_c_adapt_it == 0:
+                moving_average(self.swa_prototype, self.prototype.clone(), 1.0 / (self.swa_n + 1))
+                moving_average(self.swa_bias, self.bias.clone(), 1.0 / (self.swa_n + 1))
+                self.swa_n += 1
+
+            # Update FB_param
+            if (iteration + 1) in self.FB_param_update  \
+                    and ('oracle' not in self.FB_param_type) and (l2.sum().item() != 0):
+                deltas = self.compute_FB_param(features_q, gt_q).cpu()
+                l2 += 1
+
+            if callback is not None and (iteration + 1) % self.visdom_freq == 0:
+                self.update_callback(callback, iteration, features_s, features_q, subcls, gt_s, gt_q)
+        return deltas
+
 
     def RePRI(self,
                 features_s: torch.tensor,
