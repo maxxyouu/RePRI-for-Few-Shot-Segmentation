@@ -7,7 +7,8 @@ from util import to_one_hot
 from collections import defaultdict
 from typing import Tuple
 import numpy as np
-# from visdom_logger import VisdomLogger
+
+
 
 class AttentionBasedBlock(nn.Module):
     def __init__(self, nFeat, nK, scale_att=10.0):
