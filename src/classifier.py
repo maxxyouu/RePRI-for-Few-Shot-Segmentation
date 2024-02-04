@@ -138,7 +138,7 @@ class Classifier(object):
         self.spprt_prototypes = fg_prototype # shape [n_task, shot, c=2048], gather all the support prototypes to training the transformer module
         self.avg_prototype = self.spprt_prototypes.sum(1) / (fg_mask.sum(dim=(1, 3, 4)) + 1e-10) 
         # initialize the transformer module and compute the initial prototype. not accumulation of gradients
-        self.attention_block = AttentionBasedBlock(c, shot)
+        self.attention_block = AttentionBasedBlock(c, shot).to(features_s.device)
         # avg_protoype = fg_prototype/(fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
 
         with torch.no_grad():
@@ -420,9 +420,10 @@ class Classifier(object):
         else:
             l3 = l3 * torch.ones_like(n_shots)
 
-        self.prototype.requires_grad_()
+        # self.prototype.requires_grad_()
         self.bias.requires_grad_()
-        optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr)
+
+        optimizer = torch.optim.SGD(list(self.attention_block.parameters()) + [self.bias], lr=self.lr)
 
         ds_gt_q = F.interpolate(gt_q.float(), size=queue_features[-1].size()[-2:], mode='nearest').long() # TODO: the size must match whatever below
         ds_gt_s = F.interpolate(gt_s.float(), size=support_features[-1].size()[-2:], mode='nearest').long() # TODO: the size must match whatever below
