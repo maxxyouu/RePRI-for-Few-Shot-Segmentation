@@ -136,6 +136,8 @@ def episodic_validate(args: argparse.Namespace,
         IoU = defaultdict(int)
 
         mean_img = torch.zeros(1, 1)
+        IMG_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        IMG_MEAN = torch.reshape(torch.from_numpy(IMG_MEAN), (1,3,1,1)  )
 
         # =============== episode = group of tasks ===============
         runtime = 0
@@ -178,13 +180,15 @@ def episodic_validate(args: argparse.Namespace,
                             # spprts_in_trg.append(FDA_source_to_target(spprt, qry_img_cpy, args.LB))
                         spprts_in_trg = torch.stack(spprts_in_trg, dim=1).float()
 
-                        # if mean_img.shape[-1] < 2:
-                        #     B, C, H, W = qry_img_cpy.shape
-                        #     mean_img = args.mean.repeat(B,1,H,W)
+                        if mean_img.shape[-1] < 2:
+                            B, C, H, W = qry_img_cpy.shape
+                            mean_img = IMG_MEAN.repeat(B,1,H,W)
                             
                         # # 2. subtract mean
-                        spprt_imgs = spprts_in_trg.clone() # - mean_img                                 # src, src_lbl
-
+                        spprt_imgs = spprts_in_trg.clone() - mean_img                                 # src, src_lbl
+                        qry_img = qry_img_cpy.clone() - mean_img
+                        # spprt_imgs = spprts_in_trg.clone()                          # src, src_lbl
+                        # qry_img = qry_img_cpy.clone()
                         #---------------------------FDA END----------------------------------------#
 
                     q_label = q_label.to(args.device, non_blocking=True)
