@@ -29,9 +29,8 @@ class AttentionBasedBlock(nn.Module):
         # initialize the key matrix (number of shots, output embedding dimention of the feature extractor)
         wkeys = torch.FloatTensor(nK, nFeat).normal_(0.0, np.sqrt(2.0/nFeat))
         self.wkeys = nn.Parameter(wkeys, requires_grad=True)
-        # self.wkeys = F.normalize(self.wkeys, p=2, dim=wkeys.dim()-1, eps=1e-12)
 
-    def forward2(self, query, spprt_prototypes):
+    def forward(self, query, spprt_prototypes, avg_prototype):
         """_summary_
 
         Args:
@@ -44,80 +43,21 @@ class AttentionBasedBlock(nn.Module):
         kShots = spprt_prototypes.size(1) # [batch_size x kShots x num_features], number of support prototype vectors
 
         Qe = self.queryLayer(query.sum(dim=(-2, -1))) # [n_tasks, 1, D]
-        # Qe = Qe.view(query.shape)
         Qe = F.normalize(Qe, p=2, dim=Qe.dim()-1, eps=1e-12) # for cosine similiarity
         assert(Qe.shape[-1] == self.nFeat)
 
-        # wkeys = self.wkeys[kShots*B] # the keys of the support prototypes
         wkeys = F.normalize(self.wkeys, p=2, dim=self.wkeys.dim()-1, eps=1e-12).transpose(0,1).unsqueeze(0)
-        # wkeys = wkeys.view(B, kShots, self.nFeat).transpose(1,2) # for cosine similiarty
 
         # cosine similiarity with scale factor
-        # AttentionCoeficients = self.scale_att * torch.bmm(Qe, wkeys)
         AttentionCoeficients = self.scale_att * torch.matmul(Qe, wkeys)
         AttentionCoeficients = F.softmax(AttentionCoeficients.view(B, kShots))
         AttentionCoeficients = AttentionCoeficients.view(B, 1, kShots)
         
         # torch.matmul(Qe[0,:].unsqueeze(0), wkeys)
-        att_spprt_prototypes = torch.bmm(AttentionCoeficients, spprt_prototypes) # [n_tasks, 1, D]
+        att_spprt_prototypes = torch.matmul(AttentionCoeficients, spprt_prototypes) # [n_tasks, 1, D]
 
-        return att_spprt_prototypes.squeeze(1)
-
-    def forward(self, features_train, labels_train, spprt_prototypes, Kbase):
-        """_summary_
-
-        Args:
-            features_train (_type_): in this context, it is the feature embedding of the query vector.
-            labels_train (_type_): _description_
-            spprt_prototypes (_type_): _description_
-            Kbase (_type_): _description_
-
-        Returns:
-            _type_: _description_
-        """
-        return
-        # batch_size, num_train_examples, num_features = features_train.size()
-        # assert(num_train_examples == 1)
-        # kShots = spprt_prototypes.size(1) # [batch_size x kShots x num_features]
-        # labels_train_transposed = labels_train.transpose(1,2)
-        # nKnovel = labels_train_transposed.size(1) # [batch_size x nKnovel x num_train_examples]
-
-        # features_train = features_train.view(
-        #     batch_size*num_train_examples, num_features)
-        # Qe = self.queryLayer(features_train)
-        # Qe = Qe.view(batch_size, num_train_examples, self.nFeat)
-        # Qe = F.normalize(Qe, p=2, dim=Qe.dim()-1, eps=1e-12)
-
-        # wkeys = self.wkeys[Kbase.view(-1)] # the keys of the base categoreis
-        # wkeys = F.normalize(wkeys, p=2, dim=wkeys.dim()-1, eps=1e-12)
-        # # Transpose from [batch_size x kShots x nFeat] to
-        # # [batch_size x self.nFeat x kShots]
-        # wkeys = wkeys.view(batch_size, kShots, self.nFeat).transpose(1,2)
-
-        # # Compute the attention coeficients
-        # # batch matrix multiplications: AttentionCoeficients = Qe * wkeys ==>
-        # # [batch_size x num_train_examples x kShots] =
-        # #   [batch_size x num_train_examples x nFeat] * [batch_size x nFeat x kShots]
-        # AttentionCoeficients = self.scale_att * torch.bmm(Qe, wkeys)
-        # AttentionCoeficients = F.softmax(
-        #     AttentionCoeficients.view(batch_size*num_train_examples, kShots))
-        # AttentionCoeficients = AttentionCoeficients.view(
-        #     batch_size, num_train_examples, kShots)
-
-        # # batch matrix multiplications: weight_novel = AttentionCoeficients * spprt_prototypes ==>
-        # # [batch_size x num_train_examples x num_features] =
-        # #   [batch_size x num_train_examples x kShots] * [batch_size x kShots x num_features]
-        # weight_novel = torch.bmm(AttentionCoeficients, spprt_prototypes)
-
-        # # batch matrix multiplications: weight_novel = labels_train_transposed * weight_novel ==>
-        # # [batch_size x nKnovel x num_features] =
-        # #   [batch_size x nKnovel x num_train_examples] * [batch_size x num_train_examples x num_features]
-        # # weight_novel = torch.bmm(labels_train_transposed, weight_novel)
-        # # weight_novel = weight_novel.div(
-        # #     labels_train_transposed.sum(dim=2, keepdim=True).expand_as(weight_novel))
-
-        # return weight_novel
-
+        # NOTE: residual prototype.
+        return att_spprt_prototypes.squeeze(1) + avg_prototype
 
 class Classifier(object):
     def __init__(self, args):
@@ -196,11 +136,13 @@ class Classifier(object):
         fg_mask = (ds_gt_s == 1)
         fg_prototype = (features_s * fg_mask).sum(dim=(3, 4)) 
         self.spprt_prototypes = fg_prototype # shape [n_task, shot, c=2048], gather all the support prototypes to training the transformer module
-
+        self.avg_prototype = self.spprt_prototypes.sum(1) / (fg_mask.sum(dim=(1, 3, 4)) + 1e-10) 
         # initialize the transformer module and compute the initial prototype. not accumulation of gradients
         self.attention_block = AttentionBasedBlock(c, shot)
+        # avg_protoype = fg_prototype/(fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
+
         with torch.no_grad():
-            self.prototype = self.attention_block.forward2(features_q, fg_prototype.clone()) # TODO: do i need this here?
+            self.prototype = self.attention_block(features_q, fg_prototype.clone(), self.avg_prototype) # TODO: do i need this here?
 
         # find the bias and inialize it as the query matrix bias 
         logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
@@ -578,7 +520,7 @@ class Classifier(object):
 
         for iteration in range(1, self.adapt_iter):
             # NOTE compute the protoype using the attention_block at each iteration, learnt from previous experience (iterations)
-            self.prototype = self.attention_block.forward2(features_q, self.spprt_prototypes)
+            self.prototype = self.attention_block(features_q, self.spprt_prototypes, self.avg_prototype)
             
             logits_s = self.get_logits(features_s)  # [n_tasks, shot, num_class, h, w]
             logits_q = self.get_logits(features_q)  # [n_tasks, 1, num_class, h, w]

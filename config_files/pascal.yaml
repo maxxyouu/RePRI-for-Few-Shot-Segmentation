@@ -75,12 +75,12 @@ VISUALIZATION:
 
 CLASSIFIER:
   distance: cos
-  temperature: 20.
+  temperature: 20
   adapt_iter: 50
   FB_param_type: soft
   weights: [1.0, 'auto', 'auto']  #  [0.5, 1.0, 0.1]
   cls_lr: 0.025
-  FB_param_update: [10, 20, 30, 40]
+  FB_param_update: [10]
   cls_visdom_freq: 5
 
 DISTRIBUTED:
