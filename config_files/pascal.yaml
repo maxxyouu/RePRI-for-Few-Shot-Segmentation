@@ -52,7 +52,7 @@ MODEL:
 
 EVALUATION:
   episodic_val: True
-  shot: 2
+  shot: 1
   random_shot: False
   norm_feat: True
   batch_size_val: 5 #200
@@ -68,7 +68,7 @@ EVALUATION:
   swa_start: 20
   swa_c_adapt_it: 10
   LB: 0.01
-  fda: True
+  fda: false
 
 VISUALIZATION:
   visu: False
@@ -80,7 +80,7 @@ CLASSIFIER:
   FB_param_type: soft
   weights: [1.0, 'auto', 'auto']  #  [0.5, 1.0, 0.1]
   cls_lr: 0.025
-  FB_param_update: [10]
+  FB_param_update: [10, 30]
   cls_visdom_freq: 5
 
 DISTRIBUTED:

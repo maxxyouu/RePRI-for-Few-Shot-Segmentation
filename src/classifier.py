@@ -11,7 +11,7 @@ import numpy as np
 
 
 class AttentionBasedBlock(nn.Module):
-    def __init__(self, nFeat, nK, scale_att=10.0):
+    def __init__(self, nFeat, nK, spprts, avg_prototype, scale_att=10.0):
         super(AttentionBasedBlock, self).__init__()
         self.nFeat = nFeat # output embedding dimention of the feature extractor
 
@@ -30,7 +30,11 @@ class AttentionBasedBlock(nn.Module):
         wkeys = torch.FloatTensor(nK, nFeat).normal_(0.0, np.sqrt(2.0/nFeat))
         self.wkeys = nn.Parameter(wkeys, requires_grad=True)
 
-    def forward(self, query, spprt_prototypes, avg_prototype):
+        # initialize the value matrix as the spport prototypes and learnable
+        # self.spprt_prototypes = nn.Parameter(spprts, requires_grad=True)
+        # self.avg_prototype = avg_prototype
+
+    def forward(self, query):
         """_summary_
 
         Args:
@@ -40,7 +44,7 @@ class AttentionBasedBlock(nn.Module):
         # spprt_prototypes = spprt_prototypes.clone()
         # note that B = 1 in RePRI
         B, _, D, h, w = query.shape
-        kShots = spprt_prototypes.size(1) # [batch_size x kShots x num_features], number of support prototype vectors
+        kShots = self.spprt_prototypes.size(1) # [batch_size x kShots x num_features], number of support prototype vectors
 
         Qe = self.queryLayer(query.sum(dim=(-2, -1))) # [n_tasks, 1, D]
         Qe = F.normalize(Qe, p=2, dim=Qe.dim()-1, eps=1e-12) # for cosine similiarity
@@ -54,10 +58,10 @@ class AttentionBasedBlock(nn.Module):
         AttentionCoeficients = AttentionCoeficients.view(B, 1, kShots)
         
         # torch.matmul(Qe[0,:].unsqueeze(0), wkeys)
-        att_spprt_prototypes = torch.matmul(AttentionCoeficients, spprt_prototypes) # [n_tasks, 1, D]
+        att_spprt_prototypes = torch.matmul(AttentionCoeficients, self.spprt_prototypes) # [n_tasks, 1, D]
 
         # NOTE: residual prototype.
-        return att_spprt_prototypes.squeeze(1) + avg_prototype
+        return att_spprt_prototypes.squeeze(1) #+ self.avg_prototype # NOTE: shouldnt need the average prototype
 
 class Classifier(object):
     def __init__(self, args):
@@ -137,12 +141,13 @@ class Classifier(object):
         fg_prototype = (features_s * fg_mask).sum(dim=(3, 4)) 
         self.spprt_prototypes = fg_prototype # shape [n_task, shot, c=2048], gather all the support prototypes to training the transformer module
         self.avg_prototype = self.spprt_prototypes.sum(1) / (fg_mask.sum(dim=(1, 3, 4)) + 1e-10) 
+
         # initialize the transformer module and compute the initial prototype. not accumulation of gradients
-        self.attention_block = AttentionBasedBlock(c, shot).to(features_s.device)
+        self.attention_block = AttentionBasedBlock(c, shot, self.spprt_prototypes.clone(), self.avg_prototype.clone()).to(features_s.device)
         # avg_protoype = fg_prototype/(fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
 
         with torch.no_grad():
-            self.prototype = self.attention_block(features_q, fg_prototype.clone(), self.avg_prototype) # TODO: do i need this here?
+            self.prototype = self.attention_block(features_q) # TODO: do i need this here?
 
         # find the bias and inialize it as the query matrix bias 
         logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
@@ -152,6 +157,54 @@ class Classifier(object):
         assert self.prototype.size() == (n_task, c), self.prototype.size()
         assert torch.isnan(self.prototype).sum() == 0, self.prototype
 
+    def compute_avg_prototypes_v2(self):
+        # return self.prototype.squeeze(1) # special for shot = 1
+        fg_prototype = self.spprt_prototypes.sum(dim=1)
+        return fg_prototype / (self.spprt_prototypes.shape[1])  # [n_task, c]
+        # return self.prototype
+    def init_dense_prototypes_v2(self, features_s: torch.tensor, features_q: torch.tensor,
+                        gt_s: torch.tensor, gt_q: torch.tensor, subcls: List[int],
+                        callback) -> None:
+        """
+        inputs:
+            features_s : shape [n_task, shot, c, h, w]
+            features_q : shape [n_task, 1, c, h, w]
+            gt_s : shape [n_task, shot, H, W]
+            gt_q : shape [n_task, 1, H, W]
+
+        returns :
+            prototypes : shape [n_task, c]
+            bias : shape [n_task]
+        """
+        # DownSample support masks
+        n_task, shot, c, h, w = features_s.size()
+        ds_gt_s = F.interpolate(gt_s.float(), size=features_s.shape[-2:], mode='nearest')
+        ds_gt_s = ds_gt_s.long().unsqueeze(2)  # [n_task, shot, 1, h, w]
+
+        # Computing prototypes as masked class feature prototype
+        fg_mask = (ds_gt_s == 1)
+        self.fg_mask = fg_mask
+
+        # NOTE: new learnable set of vectors
+        self.spprt_prototypes = (features_s * fg_mask).sum(dim=(3, 4)) # per-shot summation of spatial features
+        self.spprt_prototypes /= (fg_mask.sum(dim=(3, 4)) + 1e-10) # average masking prototype for each shot.
+        # fg_prototype = self.spprt_prototypes.sum(dim=1)
+        # fg_prototype /= (fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
+        # self.prototype = fg_prototype # TODO: uncomment this to intialize a prototype vector as a masked class feature prototype.
+        # self.compute_avg_prototypes_v2()
+
+        logits_q = self.get_dense_v2_logits(features_q)  # [n_tasks, shot, h, w]
+        self.bias = logits_q.mean(dim=(1, 2, 3))
+
+        if self.swa:
+            self.swa_bias = torch.zeros_like(self.bias).to(self.bias.device)
+            self.swa_prototype = torch.zeros_like(self.prototype).to(self.prototype.device)
+
+        # assert self.prototype.size() == (n_task, c), self.prototype.size()
+        # assert torch.isnan(self.prototype).sum() == 0, self.prototype
+
+        if callback is not None:
+            self.update_callback(callback, 0, features_s, features_q, subcls, gt_s, gt_q)
 
     def init_prototypes(self, features_s: torch.tensor, features_q: torch.tensor,
                         gt_s: torch.tensor, gt_q: torch.tensor, subcls: List[int],
@@ -178,11 +231,6 @@ class Classifier(object):
         fg_prototype /= (fg_mask.sum(dim=(1, 3, 4)) + 1e-10)  # [n_task, c]
         self.prototype = fg_prototype # TODO: uncomment this to intialize a prototype vector as a masked class feature prototype.
 
-        # Compute prototypes as raw randomly intiailized vector - just like a prompt token
-        # ctx_vectors = torch.empty(size=fg_prototype.shape, dtype=fg_prototype.dtype).to(fg_prototype.device)
-        # nn.init.normal_(ctx_vectors, std=0.02)
-        # self.prototype = ctx_vectors
-
         logits_q = self.get_logits(features_q)  # [n_tasks, shot, h, w]
         self.bias = logits_q.mean(dim=(1, 2, 3))
 
@@ -200,6 +248,29 @@ class Classifier(object):
         # Put prototypes and features in the right shape for multiplication
         features = features.permute((0, 1, 3, 4, 2))  # [n_task, shot, h, w, c]
         prototype = self.swa_prototype.unsqueeze(1).unsqueeze(2) 
+        # Compute cosine similarity
+        cossim = features.matmul(prototype.unsqueeze(4)).squeeze(4)  # [n_task, shot, h, w]
+        cossim /= ((prototype.unsqueeze(3).norm(dim=4) * \
+                    features.norm(dim=4)) + 1e-10)  # [n_tasks, shot, h, w]
+
+        return self.temperature * cossim
+
+    def get_dense_v2_logits(self, features: torch.tensor) -> torch.tensor:
+
+        """
+        Computes the cosine similarity between self.prototype and given features
+        inputs:
+            features : shape [n_tasks, shot, c, h, w]
+
+        returns :
+            logits : shape [n_tasks, shot, h, w]
+        """
+
+        # Put prototypes and features in the right shape for multiplication
+        features = features.permute((0, 1, 3, 4, 2))  # [n_task, shot, h, w, c]
+        # recompute the prototype after gradient descent of learning the support prototypes
+        prototype = self.compute_avg_prototypes_v2().unsqueeze(1).unsqueeze(2)  # [n_tasks, 1, 1, c]
+        # prototype = self.prototype.unsqueeze(1).unsqueeze(2)
         # Compute cosine similarity
         cossim = features.matmul(prototype.unsqueeze(4)).squeeze(4)  # [n_task, shot, h, w]
         cossim /= ((prototype.unsqueeze(3).norm(dim=4) * \
@@ -278,6 +349,43 @@ class Classifier(object):
 
         else:
             logits_q = self.get_logits(torch.cat(queue_features, 2)) #TODO: must make all the features of the same size now all layers have the same spatial dimention.
+            probas = self.get_probas(logits_q).detach()
+            self.FB_param = (valid_pixels * probas).sum(dim=(1, 3, 4))
+            self.FB_param /= valid_pixels.sum(dim=(1, 3, 4))
+
+        # Compute the relative error
+        deltas = self.FB_param[:, 1] / oracle_FB_param[:, 1] - 1
+        return deltas
+
+    def compute_FB_param_dense_v2(self, features_q: torch.tensor, gt_q: torch.tensor) -> torch.tensor:
+        """
+        inputs:
+            features_q : shape [n_tasks, shot, c, h, w]
+            gt_q : shape [n_tasks, shot, h, w]
+
+        updates :
+            self.FB_param : shape [n_tasks, num_classes]
+        """
+        ds_gt_q = F.interpolate(gt_q.float(), size=features_q.size()[-2:], mode='nearest').long()
+        valid_pixels = (ds_gt_q != 255).unsqueeze(2)  # [n_tasks, shot, num_classes, h, w]
+        assert (valid_pixels.sum(dim=(1, 2, 3, 4)) == 0).sum() == 0, valid_pixels.sum(dim=(1, 2, 3, 4))
+
+        one_hot_gt_q = to_one_hot(ds_gt_q, self.num_classes)  # [n_tasks, shot, num_classes, h, w]
+
+        oracle_FB_param = (valid_pixels * one_hot_gt_q).sum(dim=(1, 3, 4)) / valid_pixels.sum(dim=(1, 3, 4))
+
+        if self.FB_param_type == 'oracle':
+            self.FB_param = oracle_FB_param
+            # Used to assess influence of delta perturbation
+            if self.FB_param_noise != 0:
+                perturbed_FB_param = oracle_FB_param
+                perturbed_FB_param[:, 1] += self.FB_param_noise * perturbed_FB_param[:, 1]
+                perturbed_FB_param = torch.clamp(perturbed_FB_param, 0, 1)
+                perturbed_FB_param[:, 0] = 1.0 - perturbed_FB_param[:, 1]
+                self.FB_param = perturbed_FB_param
+
+        else:
+            logits_q = self.get_dense_v2_logits(features_q)
             probas = self.get_probas(logits_q).detach()
             self.FB_param = (valid_pixels * probas).sum(dim=(1, 3, 4))
             self.FB_param /= valid_pixels.sum(dim=(1, 3, 4))
@@ -423,7 +531,7 @@ class Classifier(object):
         # self.prototype.requires_grad_()
         self.bias.requires_grad_()
 
-        optimizer = torch.optim.SGD(list(self.attention_block.parameters()) + [self.bias], lr=self.lr)
+        optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr)
 
         ds_gt_q = F.interpolate(gt_q.float(), size=queue_features[-1].size()[-2:], mode='nearest').long() # TODO: the size must match whatever below
         ds_gt_s = F.interpolate(gt_s.float(), size=support_features[-1].size()[-2:], mode='nearest').long() # TODO: the size must match whatever below
@@ -509,7 +617,9 @@ class Classifier(object):
         # self.attention_block.requires_grad()
         self.bias.requires_grad_()
 
-        optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr)
+        # optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr)
+        optimizer = torch.optim.SGD(list(self.attention_block.parameters())+[self.bias], lr=self.lr)
+
 
         ds_gt_q = F.interpolate(gt_q.float(), size=features_s.size()[-2:], mode='nearest').long()
         ds_gt_s = F.interpolate(gt_s.float(), size=features_s.size()[-2:], mode='nearest').long()
@@ -521,7 +631,7 @@ class Classifier(object):
 
         for iteration in range(1, self.adapt_iter):
             # NOTE compute the protoype using the attention_block at each iteration, learnt from previous experience (iterations)
-            self.prototype = self.attention_block(features_q, self.spprt_prototypes, self.avg_prototype)
+            self.prototype = self.attention_block(features_q)
             
             logits_s = self.get_logits(features_s)  # [n_tasks, shot, num_class, h, w]
             logits_q = self.get_logits(features_q)  # [n_tasks, 1, num_class, h, w]
@@ -554,6 +664,85 @@ class Classifier(object):
                 self.update_callback(callback, iteration, features_s, features_q, subcls, gt_s, gt_q)
         return deltas
 
+
+    def dense_v2_RePRI(self,
+                features_s: torch.tensor,
+                features_q: torch.tensor,
+                gt_s: torch.tensor,
+                gt_q: torch.tensor,
+                subcls: List,
+                n_shots: torch.tensor,
+                callback) -> torch.tensor:
+        """
+        Performs RePRI inference
+
+        inputs:
+            features_s : shape [n_tasks, shot, c, h, w]
+            features_q : shape [n_tasks, shot, c, h, w]
+            gt_s : shape [n_tasks, shot, h, w]
+            gt_q : shape [n_tasks, shot, h, w]
+            subcls : List of classes present in each task
+            n_shots : # of support shots for each task, shape [n_tasks,]
+
+        updates :
+            prototypes : torch.Tensor of shape [n_tasks, num_class, c]
+
+        returns :
+            deltas : Relative error on FB estimation right after first update, for each task,
+                     shape [n_tasks,]
+        """
+        deltas = torch.zeros_like(n_shots)
+        l1, l2, l3 = self.weights
+        if l2 == 'auto':
+            l2 = 1 / n_shots
+        else:
+            l2 = l2 * torch.ones_like(n_shots)
+        if l3 == 'auto':
+            l3 = 1 / n_shots
+        else:
+            l3 = l3 * torch.ones_like(n_shots)
+
+        self.spprt_prototypes.requires_grad_() # TODO: no gradient descent on this!
+        # self.prototype.requires_grad_()
+        self.bias.requires_grad_()
+        optimizer = torch.optim.SGD([self.spprt_prototypes, self.bias], lr=self.lr)
+        # optimizer = torch.optim.SGD([self.prototype, self.bias], lr=self.lr)
+
+
+        ds_gt_q = F.interpolate(gt_q.float(), size=features_s.size()[-2:], mode='nearest').long()
+        ds_gt_s = F.interpolate(gt_s.float(), size=features_s.size()[-2:], mode='nearest').long()
+
+        valid_pixels_q = (ds_gt_q != 255).float()  # [n_tasks, shot, h, w]
+        valid_pixels_s = (ds_gt_s != 255).float()  # [n_tasks, shot, h, w]
+
+        one_hot_gt_s = to_one_hot(ds_gt_s, self.num_classes)  # [n_tasks, shot, num_classes, h, w]
+
+        for iteration in range(1, self.adapt_iter):
+
+            logits_s = self.get_dense_v2_logits(features_s)  # [n_tasks, shot, num_class, h, w]
+            logits_q = self.get_dense_v2_logits(features_q)  # [n_tasks, 1, num_class, h, w]
+            proba_q = self.get_probas(logits_q)
+            proba_s = self.get_probas(logits_s)
+
+            d_kl, cond_entropy, marginal = self.get_entropies(valid_pixels_q,
+                                                                proba_q,
+                                                                reduction='none')
+            ce = self.get_ce(proba_s, valid_pixels_s, one_hot_gt_s, reduction='none')
+            loss = l1 * ce + l2 * d_kl + l3 * cond_entropy
+
+            optimizer.zero_grad()
+            loss.sum(0).backward()
+            optimizer.step()
+
+            # Update FB_param
+            if (iteration + 1) in self.FB_param_update  \
+                    and ('oracle' not in self.FB_param_type) and (l2.sum().item() != 0):
+                deltas = self.compute_FB_param_dense_v2(features_q, gt_q).cpu()
+                l2 += 1
+
+            if callback is not None and (iteration + 1) % self.visdom_freq == 0:
+                self.update_callback(callback, iteration, features_s, features_q, subcls, gt_s, gt_q)
+        return deltas
 
     def RePRI(self,
                 features_s: torch.tensor,
